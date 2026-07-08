@@ -10,12 +10,12 @@ A **Flutter 3.44+**–compatible fork of [prefer_shorthands](https://pub.dev/pac
 
 **Problem on Flutter 3.44:** pub.dev `0.4.7` needs `analyzer_plugin` **0.13.x**. Flutter 3.44’s analysis server ships **0.14.x**. The plugin does not load — this is a toolchain mismatch, not your app bug.
 
-**This fork (0.4.8):** Updated by **[NurmuhammadMahmudov](https://github.com/NurmuhammadMahmudov)** for Flutter 3.44+ ([GitHub repo](https://github.com/NurmuhammadMahmudov/ndev_prefer_shorthands)).
+**This fork (0.5.0+):** Updated by **[NurmuhammadMahmudov](https://github.com/NurmuhammadMahmudov)** for Flutter 3.44+ ([GitHub repo](https://github.com/NurmuhammadMahmudov/ndev_prefer_shorthands)).
 
-| | pub.dev 0.4.7 | This fork 0.4.8 |
+| | pub.dev 0.4.7 | This fork 0.5.0 |
 |---|---------------|-----------------|
-| Flutter 3.44+ | No | **Yes** |
-| Source | pub.dev | GitHub tag `v0.4.8` |
+| Flutter 3.44.2 | No | **Yes** (use `dart analyze` or IDE) |
+| Source | pub.dev | GitHub tag `v0.5.0` |
 
 - GitHub: [NurmuhammadMahmudov](https://github.com/NurmuhammadMahmudov)
 - LinkedIn: [nurmuhammad-mahmudov](https://www.linkedin.com/in/nurmuhammad-mahmudov-b2813b355/)
@@ -44,7 +44,7 @@ From your **Flutter app root** (same folder as `pubspec.yaml`):
 
 ```bash
 git clone https://github.com/NurmuhammadMahmudov/ndev_prefer_shorthands.git packages/prefer_shorthands
-cd packages/prefer_shorthands && git checkout v0.4.8 && cd ../..
+cd packages/prefer_shorthands && git checkout v0.5.0 && cd ../..
 ```
 
 ```text
@@ -68,17 +68,35 @@ plugins:
       prefer_shorthands: true
 
 prefer_shorthands:
-  convert_implicit_declaration: false   # optional
+  convert_implicit_declaration: true   # set true to also suggest for `var x = Enum.a`
 ```
 
 - Plugin config lives only in the **project/workspace root** `analysis_options.yaml`, not in nested package files.
-- `diagnostics.prefer_shorthands: true` is required (plugin lints are off by default).
+- **`diagnostics.prefer_shorthands: true` is required** — without it you will see **zero warnings**.
+- `convert_implicit_declaration: true` enables suggestions for lines like `var a = A()` (no explicit type).
 
 ### Step 3 — Restart analysis
 
 Command Palette → **Dart: Restart Analysis Server** (or restart the IDE).
 
+**Important:** after any change to `plugins:` in `analysis_options.yaml`, you must restart the analysis server.
+
 ### Step 4 — Verify
+
+```bash
+dart analyze .
+```
+
+On Flutter 3.44.2, **`flutter analyze` does not show plugin warnings yet** (known SDK issue). Use `dart analyze` in terminal, or check warnings in the IDE after restart.
+
+You should see `prefer_shorthands` info hints, for example on `example/lib/main.dart`:
+
+```bash
+cd example && dart analyze .
+# info - lib/main.dart:7:13 - Prefer shorthands ...
+```
+
+Widget example (type is known from the parameter):
 
 ```dart
 import 'package:flutter/material.dart';
@@ -91,10 +109,6 @@ Widget example() {
     children: const [Text('Hello')],
   );
 }
-```
-
-```bash
-flutter analyze
 ```
 
 ---

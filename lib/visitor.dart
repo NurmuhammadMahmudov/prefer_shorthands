@@ -37,7 +37,7 @@ class Visitor extends SimpleAstVisitor<void> {
     registry.addIfElement(rule, this);
     registry.addForElement(rule, this);
     registry.addMapLiteralEntry(rule, this);
-    registry.addFormalParameterDefaultClause(rule, this);
+    registry.addDefaultFormalParameter(rule, this);
     registry.addReturnStatement(rule, this);
     registry.addExpressionFunctionBody(rule, this);
     registry.addSwitchExpressionCase(rule, this);
@@ -126,14 +126,17 @@ class Visitor extends SimpleAstVisitor<void> {
       if (declaredType == null) continue;
 
       while (literalIndex < literal.fields.length &&
-          literal.fields[literalIndex] is RecordLiteralNamedField) {
+          literal.fields[literalIndex] is NamedExpression) {
         literalIndex++;
       }
 
       if (literalIndex >= literal.fields.length) break;
 
       final literalField = literal.fields[literalIndex];
-      final expression = literalField.fieldExpression;
+      final expression = switch (literalField) {
+        NamedExpression(:final expression) => expression,
+        _ => literalField,
+      };
 
       if (!expression.isDotShorthand) {
         _checkAndReport(expression: expression, declaredType: declaredType);
@@ -149,9 +152,9 @@ class Visitor extends SimpleAstVisitor<void> {
         if (declaredType == null) continue;
 
         for (final literalField in literal.fields) {
-          if (literalField is RecordLiteralNamedField &&
-              literalField.name.lexeme == fieldName) {
-            final expression = literalField.fieldExpression;
+          if (literalField is NamedExpression &&
+              literalField.name.label.name == fieldName) {
+            final expression = literalField.expression;
             if (!expression.isDotShorthand) {
               _checkAndReport(
                 expression: expression,
@@ -191,7 +194,10 @@ class Visitor extends SimpleAstVisitor<void> {
       };
       if (declaredType == null) continue;
 
-      final expression = literalField.fieldExpression;
+      final expression = switch (literalField) {
+        NamedExpression(:final expression) => expression,
+        _ => literalField,
+      };
 
       if (!expression.isDotShorthand) {
         _checkAndReport(expression: expression, declaredType: declaredType);
@@ -240,10 +246,6 @@ class Visitor extends SimpleAstVisitor<void> {
           operator: Token(lexeme: '!='),
         ) => node.leftOperand.staticType,
         BinaryExpression(operator: Token(lexeme: '??')) =>
-          // For ?? operator, try to get context type from parent
-          // If in argument position: use parameter type
-          // If in return/assignment: use declared type
-          // Otherwise fallback to left operand type
           node.correspondingParameter?.type ??
               node.findDeclaredType() ??
               node.leftOperand.staticType,
@@ -271,15 +273,18 @@ class Visitor extends SimpleAstVisitor<void> {
   @override
   void visitArgumentList(ArgumentList node) {
     for (final argument in node.arguments) {
-      final expression = argument.argumentExpression;
+      final expression = switch (argument) {
+        NamedExpression(:final expression) => expression,
+        _ => argument,
+      };
 
       if (expression.isDotShorthand) continue;
 
       final parameter = argument.correspondingParameter;
       final baseType = parameter?.baseElement.type;
 
-      if (baseType is TypeParameterType && parameter?.type == null) {
-        continue;
+      if (baseType is TypeParameterType) {
+        if (!expression.hasExplicitTypeContext) continue;
       }
 
       _checkAndReport(expression: expression, declaredType: parameter?.type);
@@ -331,15 +336,17 @@ class Visitor extends SimpleAstVisitor<void> {
 
     var positionalIndex = 0;
     for (final field in node.fields) {
-      final expression = field.fieldExpression;
+      final expression = switch (field) {
+        NamedExpression(:final expression) => expression,
+        _ => field,
+      };
 
       if (expression.isDotShorthand) {
-        if (field is! RecordLiteralNamedField) positionalIndex++;
+        if (field is! NamedExpression) positionalIndex++;
         continue;
       }
 
-      // Get the expected type for this field
-      final fieldName = field is RecordLiteralNamedField ? field.name.lexeme : null;
+      final fieldName = field is NamedExpression ? field.name.label.name : null;
       final fieldType = recordType.getFieldTypeByNameOrIndex(
         positionalIndex,
         fieldName,
@@ -349,21 +356,21 @@ class Visitor extends SimpleAstVisitor<void> {
         _checkAndReport(expression: expression, declaredType: fieldType);
       }
 
-      if (field is! RecordLiteralNamedField) positionalIndex++;
+      if (field is! NamedExpression) positionalIndex++;
     }
   }
 
   @override
-  void visitFormalParameterDefaultClause(FormalParameterDefaultClause node) {
-    final expression = node.value;
+  void visitDefaultFormalParameter(DefaultFormalParameter node) {
+    final expression = node.defaultValue;
+    if (expression == null) return;
     if (expression.isDotShorthand) return;
 
-    final declaredType = switch (node.parent) {
-      RegularFormalParameter(type: NamedType(type: final type)) => type,
+    final declaredType = switch (node.parameter) {
+      SimpleFormalParameter(type: NamedType(type: final type)) => type,
       _ => null,
     };
 
-    // not same as `variableDeclaration`, function parameter won't do type inference
     if (declaredType == null) return;
 
     _checkAndReport(expression: expression, declaredType: declaredType);
@@ -390,7 +397,6 @@ class Visitor extends SimpleAstVisitor<void> {
         ?.type;
     if (returnType == null) return;
 
-    // For async functions, unwrap Future<T> to get T
     final declaredType = returnType.unwrapFutureOr();
 
     _checkAndReport(expression: expression, declaredType: declaredType);
@@ -440,13 +446,11 @@ class Visitor extends SimpleAstVisitor<void> {
     final mapLiteral = node.thisOrAncestorOfType<SetOrMapLiteral>();
     if (mapLiteral == null || mapLiteral.isSet) return;
 
-    // Check key
     final keyType = mapLiteral.getIterableGenericType(IterableType.mapKey);
     if (keyType != null) {
       _checkExpression(node.key, keyType);
     }
 
-    // Check value
     final valueType = mapLiteral.getIterableGenericType(IterableType.mapValue);
     if (valueType != null) {
       _checkExpression(node.value, valueType);
@@ -469,18 +473,6 @@ class Visitor extends SimpleAstVisitor<void> {
     _checkExpression(expression, returnType);
   }
 
-  /// Check same name constructor is redirected constructor
-  ///
-  /// resolve case:
-  /// ```dart
-  /// Padding(
-  ///   padding: const EdgeInsets.all(10),
-  ///   child: xxx,
-  /// );
-  /// ```
-  /// `padding` need a `EdgeInsetsGeometry`, then `EdgeInsetsGeometry`
-  ///  has a redirected constructor to `EdgeInsets`, like
-  /// `EdgeInsetsGeometry.all` -> `EdgeInsets.all`.
   bool _isRedirectConstructor(
     Expression expression,
     InterfaceElement prefixElement,

@@ -130,8 +130,10 @@ extension TypedLiteralExtension on TypedLiteral {
         ),
       ) =>
         type,
-      FormalParameterDefaultClause(
-        parent: RegularFormalParameter(type: NamedType(:final InterfaceType type)),
+      DefaultFormalParameter(
+        parameter: SimpleFormalParameter(
+          type: NamedType(:final InterfaceType type),
+        ),
       ) =>
         type,
       _ => null,
